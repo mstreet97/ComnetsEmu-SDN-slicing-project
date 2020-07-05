@@ -19,25 +19,28 @@ class TrafficSlicing(app_manager.RyuApp):
     
         # out_port = slice_to_port[dpid][in_port]
         # dpid corresponds to the destination switch
-        '''
         self.slice_to_port = {
-            1: {1: 3, 2: 3}
+            1: {1: 3, 3: 1, 2: 4, 4: 2},
+            #2: {2: 1, 3: 1}
             #4: {1: 3, 2: 3}
         }
-        '''
 
         # outport = self.mac_to_port[dpid][mac_address]
         self.mac_to_port = {
-            1: {"00:00:00:00:00:01": 4},
-            2: {"00:00:00:00:00:02": 3, "00:00:00:00:00:03": 4},
-            3: {"00:00:00:00:00:04": 3, "00:00:00:00:00:05": 4},
-            4: {"00:00:00:00:00:06": 4}
+            #1: {"00:00:00:00:00:01": 3, "00:00:00:00:00:04": 3, "00:00:00:00:00:05": 4},
+            2: {"00:00:00:00:00:04": 1, "00:00:00:00:00:03": 4},
+            5: {"00:00:00:00:00:02": 3}
+            #6: {"00:00:00:00:00:05": 2}
         }
         self.slice_TCport = 20
 
         # outport = self.slice_ports[dpid][slicenumber]
-        self.slice_ports = {1: {2: 3}, 2: {1: 2, 2: 1}, 3: {1: 2, 2: 1}, 4: {1: 4, 2:1}}
-        self.end_swtiches = [2, 3]
+        self.slice_ports = {2: {1: 3, 2: 2}, 5: {1: 2, 2: 1}, 6: {2: 1}}
+        self.end_swtiches = [2, 5]
+        # il problema sta nello slicing, in particolare in questa configurazione non pinga da h2 ad h1, perche' se un pacchetto e' destinato allo switch 1, lo reinoltra sulla
+        # stessa porta, numero 2, di fatto rispendendolo al mittente
+        # forse si puo' creare una slice in piu' per gestire anche la topologia, in modo che h1 parli con h2, h4 parli con h1 ma h2 non parli con h4 La terza slice si puo' fare includendo un
+        # controllo sugli IP
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -93,11 +96,19 @@ class TrafficSlicing(app_manager.RyuApp):
             return
         dst = eth.dst
         src = eth.src
+        ip=pkt.protocols[1]
+        ip_dst=ip.dst
+        ip_src=ip.src
 
         dpid = datapath.id
 
-        
-        if dpid in self.mac_to_port:
+        if dpid in self.slice_to_port and in_port in self.slice_to_port[dpid]:
+            out_port = self.slice_to_port[dpid][in_port]
+            actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
+            match = datapath.ofproto_parser.OFPMatch(in_port=in_port)
+            self.add_flow(datapath, 1, match, actions)
+            self._send_package(msg, datapath, in_port, actions)
+        elif dpid in self.mac_to_port:
             if dst in self.mac_to_port[dpid]:
                 out_port = self.mac_to_port[dpid][dst]
                 actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
@@ -105,37 +116,22 @@ class TrafficSlicing(app_manager.RyuApp):
                 self.add_flow(datapath, 1, match, actions)
                 self._send_package(msg, datapath, in_port, actions)
 
-            elif (pkt.get_protocol(udp.udp) and pkt.get_protocol(udp.udp).dst_port == self.slice_TCport):
+            elif (pkt.get_protocol(tcp.tcp) and pkt.get_protocol(tcp.tcp).dst_port == self.slice_TCport):
                 slice_number = 1
                 out_port = self.slice_ports[dpid][slice_number]
                 match = datapath.ofproto_parser.OFPMatch(
                     in_port=in_port,
                     eth_dst=dst,
                     eth_type=ether_types.ETH_TYPE_IP,
-                    ip_proto=0x11,  # udp
-                    udp_dst=self.slice_TCport,
+                    ip_proto=0x06,  # udp
+                    #udp_dst=self.slice_TCport,
                 )
 
                 actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
                 self.add_flow(datapath, 2, match, actions)
                 self._send_package(msg, datapath, in_port, actions)
 
-            elif (pkt.get_protocol(udp.udp) and pkt.get_protocol(udp.udp).dst_port != self.slice_TCport):
-                slice_number = 2
-                out_port = self.slice_ports[dpid][slice_number]
-                match = datapath.ofproto_parser.OFPMatch(
-                    in_port=in_port,
-                    eth_dst=dst,
-                    eth_src=src,
-                    eth_type=ether_types.ETH_TYPE_IP,
-                    ip_proto=0x11,  # udp
-                    udp_dst=pkt.get_protocol(udp.udp).dst_port,
-                )
-                actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
-                self.add_flow(datapath, 1, match, actions)
-                self._send_package(msg, datapath, in_port, actions)
-
-            elif pkt.get_protocol(tcp.tcp):
+            elif (pkt.get_protocol(tcp.tcp) and pkt.get_protocol(tcp.tcp).dst_port != self.slice_TCport):
                 slice_number = 2
                 out_port = self.slice_ports[dpid][slice_number]
                 match = datapath.ofproto_parser.OFPMatch(
@@ -144,6 +140,22 @@ class TrafficSlicing(app_manager.RyuApp):
                     eth_src=src,
                     eth_type=ether_types.ETH_TYPE_IP,
                     ip_proto=0x06,  # tcp
+                    #udp_dst=pkt.get_protocol(tcp.tcp).dst_port,
+                )
+                actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
+                self.add_flow(datapath, 1, match, actions)
+                self._send_package(msg, datapath, in_port, actions)
+
+            elif pkt.get_protocol(udp.udp):
+                slice_number = 2
+                out_port = self.slice_ports[dpid][slice_number]
+                match = datapath.ofproto_parser.OFPMatch(
+                    in_port=in_port,
+                    eth_dst=dst,
+                    eth_src=src,
+                    eth_type=ether_types.ETH_TYPE_IP,
+                    ip_proto=0x11,  # udp
+                    udp_dst=pkt.get_protocol(upd.udp).dst_port,
                 )
                 actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
                 self.add_flow(datapath, 1, match, actions)
@@ -151,6 +163,8 @@ class TrafficSlicing(app_manager.RyuApp):
 
             elif pkt.get_protocol(icmp.icmp):
                 slice_number = 2
+                #if ip_dst == "10.0.0.4" or ip_src == "10.0.0.4":
+                #    slice_number = 3
                 out_port = self.slice_ports[dpid][slice_number]
                 match = datapath.ofproto_parser.OFPMatch(
                     in_port=in_port,
@@ -164,9 +178,6 @@ class TrafficSlicing(app_manager.RyuApp):
                 self._send_package(msg, datapath, in_port, actions)
 
         elif dpid not in self.end_swtiches:
-            #if dpid == 1:
-            #    out_port = self.slice_to_port[dpid][in_port]
-            #else:
             out_port = ofproto.OFPP_FLOOD
             actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
             match = datapath.ofproto_parser.OFPMatch(in_port=in_port)
