@@ -37,11 +37,8 @@ class TrafficSlicing(app_manager.RyuApp):
         # outport = self.slice_ports[dpid][slicenumber]
         self.slice_ports = {2: {1: 3, 2: 2}, 5: {1: 2, 2: 1}, 6: {2: 1}}
         self.end_swtiches = [2, 5]
-        # il problema sta nello slicing, in particolare in questa configurazione non pinga da h2 ad h1, perche' se un pacchetto e' destinato allo switch 1, lo reinoltra sulla
-        # stessa porta, numero 2, di fatto rispendendolo al mittente
-        # forse si puo' creare una slice in piu' per gestire anche la topologia, in modo che h1 parli con h2, h4 parli con h1 ma h2 non parli con h4 La terza slice si puo' fare includendo un
-        # controllo sugli IP
-
+        # TODO: Accesso alla DMZ dal backend alla porta 3389 (rdp) su tcp e udp
+        
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         datapath = ev.msg.datapath
@@ -122,9 +119,11 @@ class TrafficSlicing(app_manager.RyuApp):
                 match = datapath.ofproto_parser.OFPMatch(
                     in_port=in_port,
                     eth_dst=dst,
+                    eth_src=src,
                     eth_type=ether_types.ETH_TYPE_IP,
                     ip_proto=0x06,  # udp
-                    #udp_dst=self.slice_TCport,
+                    tcp_dst=self.slice_TCport, #TODO: capire cosa fa e adattarlo per tcp
+                    #https://ryu.readthedocs.io/en/latest/library_packet_ref/packet_tcp.html
                 )
 
                 actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
@@ -140,7 +139,7 @@ class TrafficSlicing(app_manager.RyuApp):
                     eth_src=src,
                     eth_type=ether_types.ETH_TYPE_IP,
                     ip_proto=0x06,  # tcp
-                    #udp_dst=pkt.get_protocol(tcp.tcp).dst_port,
+                    tcp_dst=pkt.get_protocol(tcp.tcp).dst_port,
                 )
                 actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
                 self.add_flow(datapath, 1, match, actions)
