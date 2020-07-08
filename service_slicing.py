@@ -20,7 +20,9 @@ class TrafficSlicing(app_manager.RyuApp):
         # out_port = slice_to_port[dpid][in_port]
         # dpid corresponds to the destination switch
         self.slice_to_port = {
-            1: {1: 3, 3: 1, 2: 4, 4: 2},
+            1: {1: 2, 2: 1, 3: 4, 4: 3},
+            #6: {1: 4, 2: 4, 3: 4},
+            #9: {1: 4, 2: 4, 3: 4}
             #2: {2: 1, 3: 1}
             #4: {1: 3, 2: 3}
         }
@@ -29,15 +31,18 @@ class TrafficSlicing(app_manager.RyuApp):
         self.mac_to_port = {
             #1: {"00:00:00:00:00:01": 3, "00:00:00:00:00:04": 3, "00:00:00:00:00:05": 4},
             2: {"00:00:00:00:00:04": 1, "00:00:00:00:00:03": 4},
-            5: {"00:00:00:00:00:02": 3}
-            #6: {"00:00:00:00:00:05": 2}
+            5: {"00:00:00:00:00:02": 3},
+            6: {"00:00:00:00:00:04": 4},
+            9: {"00:00:00:00:00:05": 4}
         }
-        self.slice_TCport = 20
+        self.slice_FTPdata = 20
+        self.slice_RDPdata = 3389
+        self.slice_IMAPdata = 993
 
         # outport = self.slice_ports[dpid][slicenumber]
-        self.slice_ports = {2: {1: 3, 2: 2}, 5: {1: 2, 2: 1}, 6: {2: 1}}
-        self.end_swtiches = [2, 5]
-        # TODO: Accesso alla DMZ dal backend alla porta 3389 (rdp) su tcp e udp
+        self.slice_ports = {2: {1: 3, 2: 2}, 5: {1: 2, 2: 1}, 6: {2: 3, 3: 2, 4: 1}, 9: {2: 3, 4: 1, 3: 2}}
+        self.end_swtiches = [2, 5, 6, 9]
+        # TODO: Accesso alla DMZ dal backend alla porta 3389 (rdp) su tcp e udp e 993 (IMAP)
         
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -113,16 +118,18 @@ class TrafficSlicing(app_manager.RyuApp):
                 self.add_flow(datapath, 1, match, actions)
                 self._send_package(msg, datapath, in_port, actions)
 
-            elif (pkt.get_protocol(tcp.tcp) and pkt.get_protocol(tcp.tcp).dst_port == self.slice_TCport):
+            elif (pkt.get_protocol(tcp.tcp) and pkt.get_protocol(tcp.tcp).dst_port == self.slice_FTPdata):
                 slice_number = 1
+                #print("DPID:", dpid)
+                #print("Slice:", slice_number)
                 out_port = self.slice_ports[dpid][slice_number]
                 match = datapath.ofproto_parser.OFPMatch(
                     in_port=in_port,
                     eth_dst=dst,
                     eth_src=src,
                     eth_type=ether_types.ETH_TYPE_IP,
-                    ip_proto=0x06,  # udp
-                    tcp_dst=self.slice_TCport, #TODO: capire cosa fa e adattarlo per tcp
+                    ip_proto=0x06,  # tcp
+                    tcp_dst=self.slice_FTPdata,
                     #https://ryu.readthedocs.io/en/latest/library_packet_ref/packet_tcp.html
                 )
 
@@ -130,8 +137,65 @@ class TrafficSlicing(app_manager.RyuApp):
                 self.add_flow(datapath, 2, match, actions)
                 self._send_package(msg, datapath, in_port, actions)
 
-            elif (pkt.get_protocol(tcp.tcp) and pkt.get_protocol(tcp.tcp).dst_port != self.slice_TCport):
+            elif (pkt.get_protocol(tcp.tcp) and (pkt.get_protocol(tcp.tcp).dst_port == self.slice_RDPdata or pkt.get_protocol(tcp.tcp).src_port == self.slice_RDPdata)):
+                slice_number = 3
+                #print("DPID:", dpid)
+                #print("Slice:", slice_number)
+                out_port = self.slice_ports[dpid][slice_number]
+                match = datapath.ofproto_parser.OFPMatch(
+                    in_port=in_port,
+                    eth_dst=dst,
+                    eth_src=src,
+                    eth_type=ether_types.ETH_TYPE_IP,
+                    ip_proto=0x06,  # tcp
+                    tcp_dst=self.slice_FTPdata,
+                )
+                actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
+                self.add_flow(datapath, 1, match, actions)
+                self._send_package(msg, datapath, in_port, actions)
+            
+            elif (pkt.get_protocol(udp.udp) and pkt.get_protocol(udp.udp).dst_port == self.slice_RDPdata):
+                slice_number = 3
+                #print("DPID:", dpid)
+                #print("Slice:", slice_number)
+                out_port = self.slice_ports[dpid][slice_number]
+                match = datapath.ofproto_parser.OFPMatch(
+                    in_port=in_port,
+                    eth_dst=dst,
+                    eth_src=src,
+                    eth_type=ether_types.ETH_TYPE_IP,
+                    ip_proto=0x11,  # udp
+                    tcp_dst=self.slice_RDPdata, #This is wrong
+                    #https://ryu.readthedocs.io/en/latest/library_packet_ref/packet_tcp.html
+                )
+
+                actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
+                self.add_flow(datapath, 2, match, actions)
+                self._send_package(msg, datapath, in_port, actions)
+
+            elif (pkt.get_protocol(tcp.tcp) and (pkt.get_protocol(tcp.tcp).dst_port == self.slice_IMAPdata or pkt.get_protocol(tcp.tcp).src_port == self.slice_IMAPdata)):
+                slice_number = 4
+                #print("DPID:", dpid)
+                #print("Slice:", slice_number)
+                out_port = self.slice_ports[dpid][slice_number]
+                match = datapath.ofproto_parser.OFPMatch(
+                    in_port=in_port,
+                    eth_dst=dst,
+                    eth_src=src,
+                    eth_type=ether_types.ETH_TYPE_IP,
+                    ip_proto=0x06,  # tcp
+                    tcp_dst=self.slice_IMAPdata,
+                )
+                actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
+                self.add_flow(datapath, 1, match, actions)
+                self._send_package(msg, datapath, in_port, actions)
+
+            #TODO: complete RDP also for UDP
+
+            elif (pkt.get_protocol(tcp.tcp) and pkt.get_protocol(tcp.tcp).dst_port != self.slice_FTPdata and pkt.get_protocol(tcp.tcp).dst_port != self.slice_RDPdata):
                 slice_number = 2
+                #print("DPID:", dpid)
+                #print("Slice:", slice_number)
                 out_port = self.slice_ports[dpid][slice_number]
                 match = datapath.ofproto_parser.OFPMatch(
                     in_port=in_port,
@@ -147,6 +211,8 @@ class TrafficSlicing(app_manager.RyuApp):
 
             elif pkt.get_protocol(udp.udp):
                 slice_number = 2
+                #print("DPID:", dpid)
+                #print("Slice:", slice_number)
                 out_port = self.slice_ports[dpid][slice_number]
                 match = datapath.ofproto_parser.OFPMatch(
                     in_port=in_port,
@@ -154,13 +220,15 @@ class TrafficSlicing(app_manager.RyuApp):
                     eth_src=src,
                     eth_type=ether_types.ETH_TYPE_IP,
                     ip_proto=0x11,  # udp
-                    udp_dst=pkt.get_protocol(upd.udp).dst_port,
+                    udp_dst=pkt.get_protocol(udp.udp).dst_port,
                 )
                 actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
                 self.add_flow(datapath, 1, match, actions)
                 self._send_package(msg, datapath, in_port, actions)
 
             elif pkt.get_protocol(icmp.icmp):
+                #print("DPID:", dpid)
+                #print("Slice:", slice_number)
                 slice_number = 2
                 #if ip_dst == "10.0.0.4" or ip_src == "10.0.0.4":
                 #    slice_number = 3
