@@ -154,7 +154,7 @@ class TrafficSlicing(app_manager.RyuApp):
                 self.add_flow(datapath, 1, match, actions)
                 self._send_package(msg, datapath, in_port, actions)
             
-            elif (pkt.get_protocol(udp.udp) and pkt.get_protocol(udp.udp).dst_port == self.slice_RDPdata):
+            elif (pkt.get_protocol(udp.udp) and (pkt.get_protocol(udp.udp).dst_port == self.slice_RDPdata or pkt.get_protocol(udp.udp).src_port == self.slice_RDPdata)):
                 slice_number = 3
                 #print("DPID:", dpid)
                 #print("Slice:", slice_number)
@@ -165,7 +165,7 @@ class TrafficSlicing(app_manager.RyuApp):
                     eth_src=src,
                     eth_type=ether_types.ETH_TYPE_IP,
                     ip_proto=0x11,  # udp
-                    tcp_dst=self.slice_RDPdata, #This is wrong
+                    udp_dst=self.slice_RDPdata,
                     #https://ryu.readthedocs.io/en/latest/library_packet_ref/packet_tcp.html
                 )
 
