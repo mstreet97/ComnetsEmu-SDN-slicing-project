@@ -41,7 +41,7 @@ class TrafficSlicing(app_manager.RyuApp):
         self.slice_IMAPdata = 993
 
         # outport = self.slice_ports[dpid][slicenumber]
-        self.slice_ports = {2: {1: 3, 2: 2}, 5: {1: 2, 2: 1}, 6: {2: 3, 3: 2, 4: 1}, 9: {2: 3, 4: 1, 3: 2}}
+        self.slice_ports = {2: {1: 3, 2: 2}, 5: {1: 2, 2: 1}, 6: {1: 3, 2: 3, 3: 2, 4: 1}, 9: {2: 3, 4: 1, 3: 2}}
         self.end_swtiches = [2, 5, 6, 9]
         
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
